@@ -47,7 +47,8 @@
     "rollup-plugin-typescript": "0.8.1",
     "rollup-plugin-uglify": "2.0.1",
     "tslint": "5.8.0",
-    "typescript": "2.6.2"
+    "typescript": "2.6.2",
+    "node-fetch": "2.1.2"
   },
   "dependencies": {
     "punycode": "2.1.0",
