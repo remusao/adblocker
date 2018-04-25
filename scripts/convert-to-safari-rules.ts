@@ -49,6 +49,26 @@ function isGreaterThan(thing: number, anotherThing: number, errormsg: string) {
   }
 }
 
+function isDomainValid(domain: string, starAllowed: boolean) {
+  function validate(d: string) {
+    if (!isValid(d)) {
+      throw new Error('not a valid domain = ' + domain);
+    }
+  }
+
+  const index = domain.indexOf('*');
+  const { isValid } = require('tldjs');
+  if (index > -1) {
+    if (index === 0 && starAllowed === true) {
+      validate(domain.substr(1));
+    } else {
+      throw new Error('* is not allowed in a domain');
+    }
+  } else {
+    validate(domain);
+  }
+}
+
 export function testRule(rule: any) {
   // TODO: test if string is punycode encoded.
 
@@ -118,7 +138,7 @@ export function testRule(rule: any) {
       isOfType(elem, 'string', 'domain must be a string');
       // expect(elem === elem.toLowerCase()).toBe(true);
       isSame(elem, elem.toLowerCase(), 'domain must be a lowercase string');
-      // TODO: test if string is punycode encoded
+      isDomainValid(elem, true);
     }
   }
 
@@ -135,7 +155,7 @@ export function testRule(rule: any) {
       isOfType(elem, 'string', 'domain must be a string');
       // expect(elem === elem.toLowerCase()).toBe(true);
       isSame(elem, elem.toLowerCase(), 'domain must be a lowercase string');
-      // TODO: test if string is punycode encoded
+      isDomainValid(elem, true);
     }
   }
 
@@ -168,7 +188,7 @@ export function testRule(rule: any) {
       isOfType(elem, 'string', 'domain must be a string');
       // expect(elem === elem.toLowerCase()).toBe(true);
       isSame(elem, elem.toLowerCase(), 'domain must be a lowercase string');
-      // TODO: test if string is punycode encoded
+      isDomainValid(elem, false);
     }
   }
 
@@ -185,7 +205,7 @@ export function testRule(rule: any) {
       isOfType(elem, 'string', 'domain must be a string');
       // expect(elem === elem.toLowerCase()).toBe(true);
       isSame(elem, elem.toLowerCase(), 'domain must be a lowercase string');
-      // TODO: test if string is punycode encoded
+      isDomainValid(elem, false);
     }
   }
 
