@@ -52,6 +52,7 @@ export const fullLists = [
   ...adsAndTrackingLists,
   'https://easylist-downloads.adblockplus.org/fanboy-annoyance.txt',
   'https://www.fanboy.co.nz/fanboy-cookiemonster.txt',
+  'https://easylist-downloads.adblockplus.org/advblock+cssfixes.txt',
 ];
 
 /**

@@ -95,6 +95,8 @@ function normalizeFilters(rawFilter: string): string {
  */
 const ENGINE_CONFIG = new Config({
   debug: true,
+  enableHtmlFiltering: true,
+  // TODO - also check with compression enabled
 });
 
 /**
@@ -264,19 +266,15 @@ async function collectTestCases(list: string) {
     currentRevision: string;
     previousRevision: string;
   }> = [];
-  const meta = await getMeta(`https://cdn.cliqz.com/adblocker/resources/${list}/metadata.json`);
-  const revisions: Set<string> = new Set();
-
-  // Append current revision (the most recent one)
-  const previousRevisions = [...meta.previousRevisions, meta.latestRevision];
+  const { revisions }: {
+    revisions: string[];
+  } = await getMeta(`https://cdn.cliqz.com/adblocker/resources/${list}/metadata.json`);
 
   // Skip the first one which will not have any previous rev
-  for (let i = 1; i < previousRevisions.length; i += 1) {
-    const currentRevision = previousRevisions[i];
-    revisions.add(currentRevision);
+  for (let i = 1; i < revisions.length; i += 1) {
+    const currentRevision = revisions[i];
     for (let j = Math.max(i - 7, 0); j < i; j += 1) {
-      const previousRevision = previousRevisions[j];
-      revisions.add(previousRevision);
+      const previousRevision = revisions[j];
       cases.push({
         currentRevision,
         previousRevision,
@@ -307,16 +305,21 @@ async function collectTestCases(list: string) {
   return testCases;
 }
 
+// TODO - speed-up this thing!
+
 /**
  * Start stress-test!
  */
-async function run() {
+(async () => {
   for (const list of [
     'cliqz-filters',
     'easylist',
     'easyprivacy',
+    'french-filters',
+    'german-filters',
     'plowe-0',
     'ublock-abuse',
+    'ublock-annoyances',
     'ublock-badware',
     'ublock-filters',
     'ublock-privacy',
@@ -414,6 +417,4 @@ async function run() {
 
     ENGINES_CACHE.clear();
   }
-}
-
-run();
+})();
