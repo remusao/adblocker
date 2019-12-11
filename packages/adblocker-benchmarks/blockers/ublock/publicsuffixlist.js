@@ -40,10 +40,10 @@
 
 */
 
-/******************************************************************************/
-
 const fs = require('fs');
 const path = require('path');
+
+/******************************************************************************/
 
 (function(context) {
 // >>>>>>>> start of anonymous namespace
@@ -68,12 +68,13 @@ const path = require('path');
 */
 
                                     // i32 /  i8
-const HOSTNAME_SLOT       = 0;      // jshint ignore:line
-const LABEL_INDICES_SLOT  = 256;    //  -- / 256
-const RULES_PTR_SLOT      = 100;    // 100 / 400
-const CHARDATA_PTR_SLOT   = 101;    // 101 / 404
-const EMPTY_STRING        = '';
-const SELFIE_MAGIC        = 2;
+const HOSTNAME_SLOT         = 0;    // jshint ignore:line
+const LABEL_INDICES_SLOT    = 256;  //  -- / 256 (256/2 => 128 labels max)
+const RULES_PTR_SLOT        = 100;  // 100 / 400 (400-256=144 => 144>128)
+const SUFFIX_NOT_FOUND_SLOT = 399;  //  -- / 399 (safe, see above)
+const CHARDATA_PTR_SLOT     = 101;  // 101 / 404
+const EMPTY_STRING          = '';
+const SELFIE_MAGIC          = 2;
 
 let wasmMemory;
 let pslBuffer32;
@@ -109,7 +110,7 @@ const allocateBuffers = function(byteLength) {
         pslBuffer8 = new Uint8Array(pslByteLength);
         pslBuffer32 = new Uint32Array(pslBuffer8.buffer);
     }
-    hostnameArg = '';
+    hostnameArg = EMPTY_STRING;
     pslBuffer8[LABEL_INDICES_SLOT] = 0;
 };
 
@@ -327,7 +328,7 @@ const setHostnameArg = function(hostname) {
     const buf = pslBuffer8;
     if ( hostname === hostnameArg ) { return buf[LABEL_INDICES_SLOT]; }
     if ( hostname === null || hostname.length === 0 ) {
-        hostnameArg = '';
+        hostnameArg = EMPTY_STRING;
         return (buf[LABEL_INDICES_SLOT] = 0);
     }
     hostname = hostname.toLowerCase();
@@ -402,6 +403,7 @@ const getPublicSuffixPosJS = function() {
         // 2. If no rules match, the prevailing rule is "*".
         if ( iFound === 0 ) {
             if ( buf8[iCandidates + 1 << 2] !== 0x2A /* '*' */ ) { break; }
+            buf8[SUFFIX_NOT_FOUND_SLOT] = 1;
             iFound = iCandidates;
         }
         iNode = iFound;
@@ -470,6 +472,24 @@ const getDomain = function(hostname) {
 
 /******************************************************************************/
 
+const suffixInPSL = function(hostname) {
+    if ( pslBuffer32 === undefined ) { return false; }
+
+    const hostnameLen = setHostnameArg(hostname);
+    const buf8 = pslBuffer8;
+    if ( hostnameLen === 0 || buf8[0] === 0x2E /* '.' */ ) {
+        return false;
+    }
+
+    buf8[SUFFIX_NOT_FOUND_SLOT] = 0;
+    const cursorPos = getPublicSuffixPos();
+    return cursorPos !== -1 &&
+           buf8[cursorPos + 1] === 0 &&
+           buf8[SUFFIX_NOT_FOUND_SLOT] !== 1;
+};
+
+/******************************************************************************/
+
 const toSelfie = function(encoder) {
     if ( pslBuffer8 === undefined ) { return ''; }
     if ( encoder instanceof Object ) {
@@ -513,7 +533,7 @@ const fromSelfie = function(selfie, decoder) {
     }
 
     // Important!
-    hostnameArg = '';
+    hostnameArg = EMPTY_STRING;
     pslBuffer8[LABEL_INDICES_SLOT] = 0;
 
     fireChangedEvent();
@@ -531,23 +551,14 @@ const enableWASM = (function() {
 
     return function() {
         if ( getPublicSuffixPosWASM instanceof Function ) {
-            return Promise.reject();
+            return Promise.reject('getPublicSuffixPosWASM undefined');
         }
 
         if (
             typeof WebAssembly !== 'object' ||
             typeof WebAssembly.instantiate !== 'function'
         ) {
-            return Promise.reject();
-        }
-
-        // The wasm code will work only if CPU is natively little-endian,
-        // as we use native uint32 array in our js code.
-        const uint32s = new Uint32Array(1);
-        const uint8s = new Uint8Array(uint32s.buffer);
-        uint32s[0] = 1;
-        if ( uint8s[0] !== 1 ) {
-            return Promise.reject();
+            return Promise.reject('WebAssembly is not defined');
         }
 
         const response = fs.readFileSync(path.resolve(__dirname, './wasm/publicsuffixlist.wasm'));
@@ -580,7 +591,7 @@ const enableWASM = (function() {
             return true;
         }).catch(reason => {
             console.info(reason);
-            throw new Error(reason);
+            throw reason;
         });
     };
 })();
@@ -610,6 +621,7 @@ context.publicSuffixList = {
     parse,
     getDomain,
     getPublicSuffix,
+    suffixInPSL,
     toSelfie, fromSelfie,
     disableWASM, enableWASM,
 };
