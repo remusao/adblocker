@@ -4,15 +4,15 @@ all: deps run
 requests.json:
 	curl https://cdn.cliqz.com/adblocking/requests_top500.json.gz | gunzip > requests.json
 
-# VERSION: a15e8020d092f7b9f96834d237b6ca560c6b4335
+# VERSION: 5fa8dc18c43f9ae95aaf328734e2c925f72c3fa3
 ./blockers/adblockpluscore:
 	git clone --branch=next https://github.com/adblockplus/adblockpluscore.git ./blockers/adblockpluscore
-	cd ./blockers/adblockpluscore && git reset --hard a15e8020d092f7b9f96834d237b6ca560c6b4335
+	cd ./blockers/adblockpluscore && git reset --hard 5fa8dc18c43f9ae95aaf328734e2c925f72c3fa3
 
 adblockpluscore: ./blockers/adblockpluscore
 
 ./node_modules/adblock-rs:
-	npm install adblock-rs
+	npm install --no-save adblock-rs@0.2.0
 
 adblock-rs: ./node_modules/adblock-rs
 

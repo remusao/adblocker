@@ -21,9 +21,6 @@
   "bugs": {
     "url": "https://github.com/cliqz-oss/adblocker/issues"
   },
-  "peerDependencies": {
-    "adblock-rs": "^0.1.22"
-  },
   "dependencies": {
     "@cliqz/adblocker": "^1.4.0",
     "jsdom": "^15.1.1",
