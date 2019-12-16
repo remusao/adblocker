@@ -25,6 +25,9 @@ cliqz:
 cliqz-compression:
 	NODE_ENV=production node run.js cliqzCompression requests.json
 
+cliqz-linear:
+	NODE_ENV=production node run.js cliqzLinear requests.json
+
 ublock:
 	NODE_ENV=production node run.js ublock requests.json
 

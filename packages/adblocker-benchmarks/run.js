@@ -100,6 +100,9 @@ async function main() {
     case 'cliqzCompression':
       Cls = require('./blockers/cliqz-compression.js');
       break;
+    case 'cliqzLinear':
+      Cls = require('./blockers/cliqz-linear.js');
+      break;
     case 're':
       Cls = require('./blockers/re_baseline.js');
       break;
