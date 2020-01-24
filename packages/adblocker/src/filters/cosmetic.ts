@@ -18,6 +18,7 @@ import {
   tokenizeFilter,
 } from '../utils';
 import IFilter from './interface';
+import { extractHTMLSelectorFromRule, HTMLSelector } from '../html-filtering';
 
 const EMPTY_TOKENS: [Uint32Array] = [EMPTY_UINT32_ARRAY];
 export const DEFAULT_HIDDING_STYLE: string = 'display: none !important;';
@@ -173,59 +174,41 @@ const isValidCss = (() => {
   };
 })();
 
-// NOTE: we currently handle only `script` tags
-export type Tag = 'script';
-export type HTMLSelector = [Tag, [string]];
+// const PROCEDURAL_NAME_REGEXP = /^[a-z][a-z-]{0,2}[a-z]$/;
 
-/**
- * Unescape strings by removing backslashes.
- */
-function unescape(str: string): string {
-  return str.replace(/[\\]([^\\])/g, '$1');
-}
+type ProceduralOperator =
+  | 'has'
+  | 'has-text'
+  | 'if'
+  | 'if-not'
+  | 'matches-css'
+  | 'matches-css-after'
+  | 'matches-css-before'
+  | 'min-text-length'
+  | 'not'
+  | 'nth-ancestor'
+  | 'watch-attr'
+  | 'watch-attrs'
+  | 'xpath';
 
-export function extractHTMLSelectorFromRule(rule: string): HTMLSelector | undefined {
-  const prefix = 'script:has-text(';
-  const suffix = ')';
-  let foundBackslash = false;
-  if (rule.startsWith(prefix) && rule.endsWith(suffix)) {
-    let depth = 1;
-    let i = prefix.length; // skip opening 'script:has-text('
-    const end = rule.length;
-    let prev = -1; // previous character
-    for (; i < end && depth !== 0; i += 1) {
-      const code = rule.charCodeAt(i);
+const SUPPORTED_PROCEDURAL_SELECTORS: Set<string> = new Set([
+  'has',
+  'has-text',
+  'if',
+  'if-not',
+  'matches-css',
+  'matches-css-after',
+  'matches-css-before',
+  'min-text-length',
+  'not',
+  'nth-ancestor',
+  'watch-attr',
+  'watch-attrs',
+  'xpath',
+]);
 
-      if (prev !== 92 /* '\' */) {
-        if (code === 40 /* '(' */) {
-          depth += 1;
-        }
-
-        if (code === 41 /* ')' */) {
-          depth -= 1;
-        }
-      } else {
-        foundBackslash = true; // keep track of this for un-escaping
-      }
-
-      prev = code;
-    }
-
-    // Only consider a pattern if it not a compound one (i.e.:
-    // script:has-text(foo))
-    if (i === end) {
-      return [
-        'script',
-        [
-          foundBackslash === true
-            ? unescape(rule.slice(prefix.length, i - 1))
-            : rule.slice(prefix.length, i - 1),
-        ],
-      ];
-    }
-  }
-
-  return undefined;
+function isSupportedProceduralOperator(operator: string): operator is ProceduralOperator {
+  return SUPPORTED_PROCEDURAL_SELECTORS.has(operator);
 }
 
 /**
@@ -239,6 +222,7 @@ const enum COSMETICS_MASK {
   isIdSelector = 1 << 4,
   isHrefSelector = 1 << 5,
   htmlFiltering = 1 << 6,
+  proceduralFiltering = 1 << 7,
 }
 
 function computeFilterId(
@@ -399,12 +383,19 @@ export default class CosmeticFilter implements IFilter {
       }
     }
 
-    // Deal with ^script:has-text(...)
+    // Deal with '+js(...)' scriptlet injection
     if (
-      line.charCodeAt(suffixStartIndex) === 94 /* '^' */ &&
-      fastStartsWithFrom(line, 'script:has-text(', suffixStartIndex + 1) &&
-      line.charCodeAt(line.length - 1) === 41 /* ')' */
+      line.length - suffixStartIndex > 4 &&
+      line.charCodeAt(suffixStartIndex) === 43 /* '+' */ &&
+      fastStartsWithFrom(line, '+js(', suffixStartIndex)
     ) {
+      mask = setBit(mask, COSMETICS_MASK.scriptInject);
+      selector = line.slice(suffixStartIndex + 4, line.length - 1);
+    } else if (line.charCodeAt(suffixStartIndex) === 94 /* '^' */) {
+      const scriptSelectorIndexStart = suffixStartIndex + 1;
+      const scriptSelectorIndexEnd = line.length - 1;
+      // Simple selector:
+      //
       //   ^script:has-text(selector)
       //    ^                       ^
       //    |                       |
@@ -413,100 +404,113 @@ export default class CosmeticFilter implements IFilter {
       //    |
       //    scriptSelectorIndexStart
       //
-      const scriptSelectorIndexStart = suffixStartIndex + 1;
-      const scriptSelectorIndexEnd = line.length;
+      // Compound selector:
+      //
+      //   ^script:has-text(selector1):has-text(selector2)
+      //    ^                                            ^
+      //    |                                            |
+      //    |                                            |
+      //    |                                            scriptSelectorIndexEnd
+      //    |
+      //    scriptSelectorIndexStart
+      if (
+        line.length - suffixStartIndex < 17 ||
+        fastStartsWithFrom(line, 'script:has-text(', suffixStartIndex + 1) === false ||
+        line.charCodeAt(scriptSelectorIndexEnd) !== 41 /* ')' */
+      ) {
+        console.error('???? Invalid HTML 1', line);
+        return null;
+      }
+
       mask = setBit(mask, COSMETICS_MASK.htmlFiltering);
-      selector = line.slice(scriptSelectorIndexStart, scriptSelectorIndexEnd);
+      selector = line.slice(scriptSelectorIndexStart);
 
       // Make sure this is a valid selector
       if (extractHTMLSelectorFromRule(selector) === undefined) {
+        console.error('???? Invalid HTML 2', selector);
         return null;
       }
-    } else if (
-      line.length - suffixStartIndex > 4 &&
-      line.charCodeAt(suffixStartIndex) === 43 /* '+' */ &&
-      fastStartsWithFrom(line, '+js(', suffixStartIndex)
-    ) {
-      mask = setBit(mask, COSMETICS_MASK.scriptInject);
-      selector = line.slice(suffixStartIndex + 4, line.length - 1);
     } else {
-      // Detect special syntax
+      // Detect special syntax :<selector>
       let indexOfColon = line.indexOf(':', suffixStartIndex);
+
       while (indexOfColon !== -1) {
         const indexAfterColon = indexOfColon + 1;
-        if (fastStartsWithFrom(line, 'style', indexAfterColon)) {
-          // ##selector :style(...)
-          if (line[indexAfterColon + 5] === '(' && line[line.length - 1] === ')') {
-            selector = line.slice(suffixStartIndex, indexOfColon);
-            style = line.slice(indexAfterColon + 6, -1);
-          } else {
-            return null;
+        const indexOfOpeningBracket = line.indexOf('(', indexAfterColon);
+
+        // No parenthis found, filter is not well formed
+        if (indexOfOpeningBracket !== -1) {
+          const operator = line.slice(indexAfterColon, indexOfOpeningBracket);
+
+          if (operator === 'style') {
+            // ##selector :style(...)
+            if (line[indexAfterColon + 5] === '(' && line[line.length - 1] === ')') {
+              selector = line.slice(suffixStartIndex, indexOfColon);
+              style = line.slice(indexAfterColon + 6, -1);
+            } else {
+              console.error('???? INVALID :style', operator);
+              return null;
+            }
+          } else if (isSupportedProceduralOperator(operator)) {
+            mask = setBit(mask, COSMETICS_MASK.proceduralFiltering);
+            break;
           }
-        } else if (
-          fastStartsWithFrom(line, '-abp-', indexAfterColon) ||
-          fastStartsWithFrom(line, 'contains', indexAfterColon) ||
-          fastStartsWithFrom(line, 'has', indexAfterColon) ||
-          fastStartsWithFrom(line, 'if', indexAfterColon) ||
-          fastStartsWithFrom(line, 'if-not', indexAfterColon) ||
-          fastStartsWithFrom(line, 'matches-css', indexAfterColon) ||
-          fastStartsWithFrom(line, 'matches-css-after', indexAfterColon) ||
-          fastStartsWithFrom(line, 'matches-css-before', indexAfterColon) ||
-          fastStartsWithFrom(line, 'properties', indexAfterColon) ||
-          fastStartsWithFrom(line, 'subject', indexAfterColon) ||
-          fastStartsWithFrom(line, 'xpath', indexAfterColon)
-        ) {
-          return null;
         }
+
         indexOfColon = line.indexOf(':', indexAfterColon);
       }
 
-      // If we reach this point, filter is not extended syntax
+      // Extract selector (selector can have been set by ':style' before)
       if (selector === undefined && suffixStartIndex < line.length) {
         selector = line.slice(suffixStartIndex);
+        if (getBit(mask, COSMETICS_MASK.proceduralFiltering) === false && isValidCss(selector) === false) {
+          console.error('???? INVALID', selector);
+          return null;
+        }
       }
 
-      if (selector === undefined || !isValidCss(selector)) {
-        // Not a valid selector
-        return null;
+      if (selector !== undefined) {
+        // Classify selector
+        if (getBit(mask, COSMETICS_MASK.htmlFiltering) === false) {
+          const c0 = selector.charCodeAt(0);
+          const c1 = selector.charCodeAt(1);
+          const c2 = selector.charCodeAt(2);
+
+          // Check if we have a specific case of simple selector (id, class or
+          // href) These are the most common filters and will benefit greatly from
+          // a custom dispatch mechanism.
+          if (getBit(mask, COSMETICS_MASK.scriptInject) === false) {
+            if (c0 === 46 /* '.' */ && isSimpleSelector(selector)) {
+              mask = setBit(mask, COSMETICS_MASK.isClassSelector);
+            } else if (c0 === 35 /* '#' */ && isSimpleSelector(selector)) {
+              mask = setBit(mask, COSMETICS_MASK.isIdSelector);
+            } else if (
+              c0 === 97 /* a */ &&
+              c1 === 91 /* '[' */ &&
+              c2 === 104 /* 'h' */ &&
+              isSimpleHrefSelector(selector, 2)
+            ) {
+              mask = setBit(mask, COSMETICS_MASK.isHrefSelector);
+            } else if (
+              c0 === 91 /* '[' */ &&
+              c1 === 104 /* 'h' */ &&
+              isSimpleHrefSelector(selector, 1)
+            ) {
+              mask = setBit(mask, COSMETICS_MASK.isHrefSelector);
+            }
+          }
+        }
       }
     }
 
     // Check if unicode appears in selector
-    if (selector !== undefined) {
-      if (hasUnicode(selector)) {
-        mask = setBit(mask, COSMETICS_MASK.isUnicode);
-      }
+    if (selector !== undefined && hasUnicode(selector)) {
+      mask = setBit(mask, COSMETICS_MASK.isUnicode);
+    }
 
-      // Classify selector
-      if (getBit(mask, COSMETICS_MASK.htmlFiltering) === false) {
-        const c0 = selector.charCodeAt(0);
-        const c1 = selector.charCodeAt(1);
-        const c2 = selector.charCodeAt(2);
-
-        // Check if we have a specific case of simple selector (id, class or
-        // href) These are the most common filters and will benefit greatly from
-        // a custom dispatch mechanism.
-        if (getBit(mask, COSMETICS_MASK.scriptInject) === false) {
-          if (c0 === 46 /* '.' */ && isSimpleSelector(selector)) {
-            mask = setBit(mask, COSMETICS_MASK.isClassSelector);
-          } else if (c0 === 35 /* '#' */ && isSimpleSelector(selector)) {
-            mask = setBit(mask, COSMETICS_MASK.isIdSelector);
-          } else if (
-            c0 === 97 /* a */ &&
-            c1 === 91 /* '[' */ &&
-            c2 === 104 /* 'h' */ &&
-            isSimpleHrefSelector(selector, 2)
-          ) {
-            mask = setBit(mask, COSMETICS_MASK.isHrefSelector);
-          } else if (
-            c0 === 91 /* '[' */ &&
-            c1 === 104 /* 'h' */ &&
-            isSimpleHrefSelector(selector, 1)
-          ) {
-            mask = setBit(mask, COSMETICS_MASK.isHrefSelector);
-          }
-        }
-      }
+    if (selector === undefined) {
+      console.error('?????', line, selector);
+      return null;
     }
 
     return new CosmeticFilter({
@@ -986,8 +990,12 @@ export default class CosmeticFilter implements IFilter {
     return this.selector;
   }
 
-  public getExtendedSelector(): HTMLSelector | undefined {
+  public getHtmlSelector(): HTMLSelector | undefined {
     return extractHTMLSelectorFromRule(this.selector);
+  }
+
+  public getExtendedSelector(): void {
+    // TODO - return type of procedural filter
   }
 
   public isUnhide(): boolean {

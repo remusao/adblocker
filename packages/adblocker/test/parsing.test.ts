@@ -13,12 +13,12 @@ import CosmeticFilter, {
 import NetworkFilter from '../src/filters/network';
 import { parseFilters } from '../src/lists';
 import { fastHash, hashStrings, tokenizeFilter } from '../src/utils';
+import { HTMLSelector } from '../src/html-filtering';
 
 function h(hostnames: string[]): Uint32Array {
   return new Uint32Array(hostnames.map(hashHostnameBackward));
 }
 
-// TODO: collaps, popup, popunder, genericblock
 function network(filter: string, expected: any) {
   const parsed = NetworkFilter.parse(filter);
   if (parsed !== null) {
@@ -490,6 +490,7 @@ describe('Network filters', () => {
       '@@||foo.com/pattern/$script',
       '@@|foo.com/pattern/$script',
       '|foo.com/pattern/$script',
+      '/script/pattern.js|$script',
     ]) {
       it(filter, () => {
         network(filter, {
@@ -1208,7 +1209,7 @@ describe('Cosmetic filters', () => {
               });
             });
 
-            for (const invalidSeparator of ['~', ', ', '  ~ ', '+', '#', ']']) {
+            for (const invalidSeparator of ['~', ', ', '  ~ ', '+', '#']) {
               const selector = `${symbol}sele${invalidSeparator}ctor`;
               const filter = `${domains}${unhide ? '#@#' : '##'}${selector}`;
               it(`rejects ${filter}`, () => {
@@ -1223,7 +1224,7 @@ describe('Cosmetic filters', () => {
 
             // Accepted compound selectors
             for (const compound of [
-              '[]',
+              '[href="https://example.com"]',
               ' > selector',
               ' ~ selector',
               ' + selector',
@@ -1371,47 +1372,63 @@ describe('Cosmetic filters', () => {
     });
 
     describe('get selector', () => {
-      for (const [rule, selector] of [
-        // Fake filters for tests
-        ['script:has-text()', ''],
-        ['script:has-text(a)', 'a'],
-        ['script:has-text(/a/)', '/a/'],
-        ['script:has-text(/a/i)', '/a/i'],
-        ['script:has-text(/a//i)', '/a//i'],
-        ['script:has-text(/a/i/)', '/a/i/'],
-        ['script:has-text(())', '()'],
-        ['script:has-text(((a))', '((a)'],
-
-        // Real filters
-        ["script:has-text('+'\\x)", "'+'x"],
-        ["script:has-text('+'\\\\x)", "'+'\\x"],
-        ['script:has-text(("0x)', '("0x'],
-        ['script:has-text((window);)', '(window);'],
-        ['script:has-text(,window\\);)', ',window);'],
-        ['script:has-text(/addLinkToCopy/i)', '/addLinkToCopy/i'],
-        ['script:has-text(/i10C/i)', '/i10C/i'],
-        ['script:has-text(/i10C/)', '/i10C/'],
-        ['script:has-text(3f87b0eaddd)', '3f87b0eaddd'],
-        ['script:has-text(ADBLOCK)', 'ADBLOCK'],
-        ['script:has-text(Inject=!)', 'Inject=!'],
-        ['script:has-text(String.fromCodePoint)', 'String.fromCodePoint'],
-        ['script:has-text(a.HTMLImageElement.prototype)', 'a.HTMLImageElement.prototype'],
-        ['script:has-text(this[atob)', 'this[atob'],
-        ['script:has-text(}(window);)', '}(window);'],
-
-        // TODO - implement support for chaining
-        // ['script:has-text(===):has-text(/[\w\W]{14000}/)', ''],
-        // ['script:has-text(===):has-text(/[\w\W]{16000}/)', ''],
-      ]) {
+      const test = (rule: string, expected: HTMLSelector | null): void => {
         it(`${rule}`, () => {
           const raw = `##^${rule}`;
           const parsed = CosmeticFilter.parse(raw);
-          expect(parsed).not.toBeNull();
-          if (parsed !== null) {
-            expect(parsed.getExtendedSelector()).toStrictEqual(['script', [selector]]);
+          if (expected === null) {
+            expect(parsed).toBeNull();
+          } else {
+            expect(parsed).not.toBeNull();
+            if (parsed !== null) {
+              expect(parsed.getHtmlSelector()).toStrictEqual(expected);
+            }
           }
         });
-      }
+      };
+
+        // Fake filters for tests
+      test('script:has-text()', ['script', ['']]);
+      test('script:has-text(a)', ['script',  ['a']]);
+      test('script:has-text(/a/)', ['script',  ['/a/']]);
+      test('script:has-text(/a/i)', ['script',  ['/a/i']]);
+      test('script:has-text(/a//i)', ['script',  ['/a//i']]);
+      test('script:has-text(/a/i/)', ['script',  ['/a/i/']]);
+      test('script:has-text(())', ['script',  ['()']]);
+      test('script:has-text(((a))', ['script',  ['((a)']]);
+
+        // Real filters
+      test("script:has-text('+'\\x)", ['script', ["'+'x"]]);
+      test("script:has-text('+'\\\\x)", ['script', ["'+'\\x"]]);
+      test('script:has-text(("0x)', ['script', ['("0x']]);
+      test('script:has-text((window);)', ['script', ['(window);']]);
+      test('script:has-text(,window\\);)', ['script', [',window);']]);
+      test('script:has-text(/addLinkToCopy/i)', ['script', ['/addLinkToCopy/i']]);
+      test('script:has-text(/i10C/i)', ['script', ['/i10C/i']]);
+      test('script:has-text(/i10C/)', ['script', ['/i10C/']]);
+      test('script:has-text(3f87b0eaddd)', ['script', ['3f87b0eaddd']]);
+      test('script:has-text(ADBLOCK)', ['script', ['ADBLOCK']]);
+      test('script:has-text(Inject=!)', ['script', ['Inject=!']]);
+      test('script:has-text(String.fromCodePoint)', ['script', ['String.fromCodePoint']]);
+      test('script:has-text(a.HTMLImageElement.prototype)', ['script', ['a.HTMLImageElement.prototype']]);
+      test('script:has-text(this[atob)', ['script', ['this[atob']]);
+      test('script:has-text(}(window);)', ['script', ['}(window);']]);
+
+      test('script:has-text(===):has-text(/[\w\W]{14000}/)', [
+        'script',
+        [
+          '===',
+          '/[\w\W]{14000}/',
+        ],
+      ]);
+
+      test('script:has-text((((()', [
+        'script',
+        ['((((']
+      ]);
+
+      test('script:has-text(foo):)', null);
+      test('script:has-text(foo):has-text)', null);
     });
   });
 
@@ -1438,12 +1455,9 @@ describe('Cosmetic filters', () => {
     cosmetic('foo.com,bar.de###foo > bar >baz:styleTYPO(display: none)', null);
   });
 
-  // TODO
-  // it('rejects invalid selectors', () => {
-  //   const dom = new JSDOM('<!DOCTYPE html><p>Hello world</p>');
-  //   Object.defineProperty(global, 'document', { value: dom.window.document, writable: true });
-  //   expect(CosmeticFilter.parse('###.selector /invalid/')).toBeNull();
-  // });
+  it('rejects invalid selectors', () => {
+    expect(CosmeticFilter.parse('###.selector /invalid/')).toBeNull();
+  });
 
   it('#getScript', () => {
     const parsed = CosmeticFilter.parse('##+js(script.js, arg1, arg2, arg3)');
@@ -1482,7 +1496,7 @@ describe('Cosmetic filters', () => {
       for (const kind of ['.', '#']) {
         for (const compound of [
           '',
-          '[]',
+          '[href="https://example.com"]',
           ' > selector',
           ' ~ selector',
           ' + selector',

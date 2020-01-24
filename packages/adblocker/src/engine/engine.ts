@@ -18,7 +18,8 @@ import {
   fetchResources,
   fullLists,
 } from '../fetch';
-import CosmeticFilter, { HTMLSelector } from '../filters/cosmetic';
+import CosmeticFilter from '../filters/cosmetic';
+import { HTMLSelector } from '../html-filtering';
 import NetworkFilter from '../filters/network';
 import { IListDiff, IRawDiff, parseFilters } from '../lists';
 import Request from '../request';
@@ -529,7 +530,7 @@ export default class FilterEngine extends EventEmitter<
 
     for (let i = 0; i < rules.length; i += 1) {
       const rule = rules[i];
-      const extended = rule.getExtendedSelector();
+      const extended = rule.getHtmlSelector();
       if (extended !== undefined) {
         htmlSelectors.push(extended);
       }
